@@ -44,6 +44,13 @@ func circlePath(circle *dxf_entities.Circle) (path []ms3.Vec) {
 	return
 }
 
+func VecEqual(a, b ms3.Vec) bool {
+	err := 0.01
+	return (math.Abs(float64(a.X-b.X)) < err) &&
+		(math.Abs(float64(a.Y-b.Y)) < err) &&
+		(math.Abs(float64(a.Z-b.Z)) < err)
+}
+
 func execute(options *mainOptions, dxfFilename string) (err error) {
 	file, err := os.Open(dxfFilename)
 	if err != nil {
@@ -56,21 +63,11 @@ func execute(options *mainOptions, dxfFilename string) (err error) {
 		return
 	}
 
-	var machine interface {
-		fisnar.Closer
-		fisnar.Mover
-		fisnar.Dispenser
-	}
+	paths := []([]ms3.Vec){}
 
-	var extrude bool
 	for _, entity := range doc.Entities.Entities {
 		path := []ms3.Vec{}
 
-		machine.WaitFor()
-		if !extrude {
-			machine.SetDispenser(true)
-			extrude = true
-		}
 		if polyline, ok := entity.(*dxf_entities.Polyline); ok {
 			for _, v := range polyline.Vertices {
 				path = append(path, ms3.Vec{X: float32(v.Location.X), Y: float32(v.Location.Y), Z: float32(v.Location.Z)})
@@ -88,14 +85,24 @@ func execute(options *mainOptions, dxfFilename string) (err error) {
 			continue
 		}
 
-		paths += append(paths, path)
+		if len(paths) > 1 {
+			k := len(paths) - 1
+			n := len(paths[k]) - 1
+			if VecEqual(paths[k][n], path[0]) {
+				paths[k] = append(paths[k], path[1:]...)
+			} else {
+				paths = append(paths, path)
+			}
+		} else {
+			paths = append(paths, path)
+		}
 	}
 
 	if len(paths) == 0 {
 		return
 	}
 
-	machine, err = fisnar.OpenF4200N(options.Port)
+	machine, err := fisnar.OpenF4200N(options.Port)
 	if err != nil {
 		return
 	}
