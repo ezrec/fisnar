@@ -19,6 +19,8 @@ type mainOptions struct {
 	Port      string
 	Speed     float32
 	DotTimeMs uint
+	Offset    []float32
+	ZHop      float32
 }
 
 func circlePath(circle *dxf_entities.Circle) (path []ms3.Vec) {
@@ -63,6 +65,8 @@ func execute(options *mainOptions, dxfFilename string) (err error) {
 		return
 	}
 
+	offset := ms3.Vec{X: options.Offset[0], Y: options.Offset[1], Z: options.Offset[2]}
+
 	paths := []([]ms3.Vec){}
 
 	for _, entity := range doc.Entities.Entities {
@@ -102,6 +106,13 @@ func execute(options *mainOptions, dxfFilename string) (err error) {
 		return
 	}
 
+	// Add offset to paths
+	for _, path := range paths {
+		for k, vec := range path {
+			path[k] = ms3.Add(vec, offset)
+		}
+	}
+
 	machine, err := fisnar.OpenF4200N(options.Port)
 	if err != nil {
 		return
@@ -120,8 +131,10 @@ func execute(options *mainOptions, dxfFilename string) (err error) {
 
 	for _, path := range paths {
 		fmt.Printf("Move: %v (\n", path[0])
-		machine.MoveTo(path[0].X, path[0].Y, path[0].Z)
+		// Hop by Z
+		machine.MoveTo(path[0].X, path[0].Y, path[0].Z-options.ZHop)
 		machine.WaitFor()
+		machine.MoveTo(path[0].X, path[0].Y, path[0].Z)
 		machine.SetDispenser(true)
 		if len(path) == 1 {
 			fmt.Printf("  Dot\n")
@@ -134,22 +147,28 @@ func execute(options *mainOptions, dxfFilename string) (err error) {
 			}
 			machine.WaitFor()
 		}
-		fmt.Printf(")\n")
 		machine.SetDispenser(false)
+		// Hop by Z
+		last := path[len(path)-1]
+		machine.MoveTo(last.X, last.Y, last.Z-options.ZHop)
+		fmt.Printf(")\n")
 	}
 
 	machine.WaitFor()
-	machine.SetDispenser(false)
 
 	return
 }
 
 func main() {
-	var options mainOptions
+	options := mainOptions{
+		Offset: []float32{},
+	}
 
 	flag.UintVar(&options.DotTimeMs, "dot-time-ms", 100, "Dot extrusion time")
 	flag.Float32Var(&options.Speed, "speed", 10, "Speed, in mm/second")
 	flag.StringVar(&options.Port, "port", "/dev/ttyUSB0", "Serial port")
+	flag.Float32SliceVar(&options.Offset, "offset", []float32{0.0, 0.0, 0.0}, "X,Y,Z offset of work plane, in mm")
+	flag.Float32Var(&options.ZHop, "z-hop", 0.0, "Hop in Z when moving between dispense lines")
 	flag.SetInterspersed(true)
 	flag.Parse()
 
@@ -157,6 +176,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage:\n    %s [options] <filename.dxf>\n", os.Args[0])
 		flag.PrintDefaults()
 		os.Exit(1)
+	}
+
+	for len(options.Offset) < 3 {
+		options.Offset = append(options.Offset, 0.0)
 	}
 
 	err := execute(&options, flag.Args()[0])
