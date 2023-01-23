@@ -16,11 +16,13 @@ import (
 )
 
 type mainOptions struct {
+	Dispense  bool
 	Port      string
 	Speed     float32
 	DotTimeMs uint
 	Offset    []float32
 	ZHop      float32
+	Scale     float32
 }
 
 func circlePath(circle *dxf_entities.Circle) (path []ms3.Vec) {
@@ -106,10 +108,11 @@ func execute(options *mainOptions, dxfFilename string) (err error) {
 		return
 	}
 
-	// Add offset to paths
+	// Add scaling then offset to paths
 	for _, path := range paths {
 		for k, vec := range path {
-			path[k] = ms3.Add(vec, offset)
+			scaled := ms3.Scale(options.Scale, vec)
+			path[k] = ms3.Add(scaled, offset)
 		}
 	}
 
@@ -135,7 +138,9 @@ func execute(options *mainOptions, dxfFilename string) (err error) {
 		machine.MoveTo(path[0].X, path[0].Y, path[0].Z-options.ZHop)
 		machine.WaitFor()
 		machine.MoveTo(path[0].X, path[0].Y, path[0].Z)
-		machine.SetDispenser(true)
+		if options.Dispense {
+			machine.SetDispenser(true)
+		}
 		if len(path) == 1 {
 			fmt.Printf("  Dot\n")
 			// Dispense dot.
@@ -143,11 +148,17 @@ func execute(options *mainOptions, dxfFilename string) (err error) {
 		} else {
 			for _, vec := range path {
 				fmt.Printf("  .. %v\n", vec)
-				machine.LineTo(vec.X, vec.Y, vec.Z)
+				if options.Dispense {
+					machine.LineTo(vec.X, vec.Y, vec.Z)
+				} else {
+					machine.MoveTo(vec.X, vec.Y, vec.Z)
+				}
 			}
 			machine.WaitFor()
 		}
-		machine.SetDispenser(false)
+		if options.Dispense {
+			machine.SetDispenser(false)
+		}
 		// Hop by Z
 		last := path[len(path)-1]
 		machine.MoveTo(last.X, last.Y, last.Z-options.ZHop)
@@ -164,11 +175,13 @@ func main() {
 		Offset: []float32{},
 	}
 
+	flag.BoolVar(&options.Dispense, "dispense", false, "Dispense")
 	flag.UintVar(&options.DotTimeMs, "dot-time-ms", 100, "Dot extrusion time")
 	flag.Float32Var(&options.Speed, "speed", 10, "Speed, in mm/second")
 	flag.StringVar(&options.Port, "port", "/dev/ttyUSB0", "Serial port")
 	flag.Float32SliceVar(&options.Offset, "offset", []float32{0.0, 0.0, 0.0}, "X,Y,Z offset of work plane, in mm")
 	flag.Float32Var(&options.ZHop, "z-hop", 0.0, "Hop in Z when moving between dispense lines")
+	flag.Float32Var(&options.Scale, "scale", 1.0, "Scale output by this value")
 	flag.SetInterspersed(true)
 	flag.Parse()
 
